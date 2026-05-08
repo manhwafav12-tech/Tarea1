@@ -1,0 +1,1614 @@
+package com.example.apptareas
+
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Paint
+import android.graphics.pdf.PdfDocument
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.OpenableColumns
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.dp
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.apptareas.data.Tarea
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+const val CANAL_TAREAS_ID = "canal_tareas"
+
+data class ArchivoRecibido(
+    val nombre: String,
+    val ruta: String,
+    val mime: String
+)
+
+class MainActivity : ComponentActivity() {
+
+    private var archivoRecibido = mutableStateOf<ArchivoRecibido?>(null)
+
+    private val pedirPermisoNotificaciones =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        crearCanalNotificaciones(this)
+        pedirPermisoNotificacionesSiHaceFalta()
+
+        archivoRecibido.value = copiarArchivoRecibido(this, intent)
+
+        setContent {
+            val tareaViewModel: TareaViewModel = viewModel()
+
+            AppTareas(
+                viewModel = tareaViewModel,
+                archivoRecibido = archivoRecibido.value
+            )
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+
+        archivoRecibido.value = copiarArchivoRecibido(this, intent)
+    }
+
+    private fun pedirPermisoNotificacionesSiHaceFalta() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                pedirPermisoNotificaciones.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+}
+
+@Composable
+fun AppTareas(
+    viewModel: TareaViewModel,
+    archivoRecibido: ArchivoRecibido?
+) {
+    var temaOscuro by remember {
+        mutableStateOf(viewModel.temaOscuroInicial)
+    }
+
+    var notificaciones by remember {
+        mutableStateOf(viewModel.notificacionesInicial)
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner, temaOscuro, notificaciones) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                viewModel.guardarPreferencias(
+                    temaOscuro = temaOscuro,
+                    notificaciones = notificaciones
+                )
+            }
+        }
+
+        lifecycleOwner.lifecycle.addObserver(observer)
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    MaterialTheme(
+        colorScheme = if (temaOscuro) darkColorScheme() else lightColorScheme()
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = if (temaOscuro) {
+                MaterialTheme.colorScheme.background
+            } else {
+                Color(0xFFF6F7FB)
+            }
+        ) {
+            PantallaTareas(
+                viewModel = viewModel,
+                archivoRecibido = archivoRecibido,
+                temaOscuro = temaOscuro,
+                onTemaOscuroChange = {
+                    temaOscuro = it
+                    viewModel.guardarPreferencias(temaOscuro, notificaciones)
+                },
+                notificaciones = notificaciones,
+                onNotificacionesChange = {
+                    notificaciones = it
+                    viewModel.guardarPreferencias(temaOscuro, notificaciones)
+                }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PantallaTareas(
+    viewModel: TareaViewModel,
+    archivoRecibido: ArchivoRecibido?,
+    temaOscuro: Boolean,
+    onTemaOscuroChange: (Boolean) -> Unit,
+    notificaciones: Boolean,
+    onNotificacionesChange: (Boolean) -> Unit
+) {
+    val context = LocalContext.current
+    val tareas by viewModel.tareas.collectAsState()
+
+    val totalTareas = tareas.size
+    val tareasPendientes = tareas.count { !it.estaCompletada }
+    val tareasCompletadas = tareas.count { it.estaCompletada }
+
+    var titulo by remember { mutableStateOf("") }
+    var descripcion by remember { mutableStateOf("") }
+    var fecha by remember { mutableStateOf("") }
+    var busqueda by remember { mutableStateOf("") }
+
+    var archivoNombre by remember { mutableStateOf<String?>(null) }
+    var archivoRuta by remember { mutableStateOf<String?>(null) }
+    var archivoMime by remember { mutableStateOf<String?>(null) }
+    var mostrarArchivoRecibido by remember { mutableStateOf(false) }
+
+    var mostrarCalendario by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState()
+
+    var tareaSeleccionada by remember { mutableStateOf<Tarea?>(null) }
+    var tareaEditando by remember { mutableStateOf<Tarea?>(null) }
+    var tareaCompartir by remember { mutableStateOf<Tarea?>(null) }
+
+    val tareasFiltradas = remember(tareas, busqueda) {
+        val texto = busqueda.trim()
+
+        if (texto.isBlank()) {
+            tareas
+        } else {
+            tareas.filter { tarea ->
+                tarea.id.toString().contains(texto, ignoreCase = true) ||
+                        tarea.titulo.contains(texto, ignoreCase = true) ||
+                        tarea.descripcion.contains(texto, ignoreCase = true) ||
+                        tarea.fecha.contains(texto, ignoreCase = true) ||
+                        (tarea.archivoNombre ?: "").contains(texto, ignoreCase = true)
+            }
+        }
+    }
+
+    LaunchedEffect(archivoRecibido) {
+        if (archivoRecibido != null) {
+            archivoNombre = archivoRecibido.nombre
+            archivoRuta = archivoRecibido.ruta
+            archivoMime = archivoRecibido.mime
+            mostrarArchivoRecibido = true
+
+            if (titulo.isBlank()) {
+                titulo = archivoRecibido.nombre
+            }
+
+            if (descripcion.isBlank()) {
+                descripcion = "Archivo adjunto: ${archivoRecibido.nombre}"
+            }
+        }
+    }
+
+    if (mostrarCalendario) {
+        DatePickerDialog(
+            onDismissRequest = {
+                mostrarCalendario = false
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val millis = datePickerState.selectedDateMillis
+                        if (millis != null) {
+                            fecha = formatearFecha(millis)
+                        }
+                        mostrarCalendario = false
+                    }
+                ) {
+                    Text("Aceptar")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        mostrarCalendario = false
+                    }
+                ) {
+                    Text("Cancelar")
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    tareaSeleccionada?.let { tarea ->
+        AlertDialog(
+            onDismissRequest = {
+                tareaSeleccionada = null
+            },
+            title = {
+                Text("Vista previa")
+            },
+            text = {
+                Column {
+                    Text(
+                        text = tarea.titulo,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        textDecoration = if (tarea.estaCompletada) {
+                            TextDecoration.LineThrough
+                        } else {
+                            TextDecoration.None
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text("Descripción", fontWeight = FontWeight.Bold)
+
+                    Text(
+                        text = tarea.descripcion.ifBlank { "Sin descripción" },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text("Fecha: ${tarea.fecha.ifBlank { "Sin fecha" }}")
+
+                    if (!tarea.archivoNombre.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text("Archivo", fontWeight = FontWeight.Bold)
+                        Text(tarea.archivoNombre)
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                if (tarea.estaCompletada) {
+                                    "Completada"
+                                } else {
+                                    "Pendiente"
+                                }
+                            )
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        tareaEditando = tarea
+                        tareaSeleccionada = null
+                    }
+                ) {
+                    Text("Editar")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        tareaSeleccionada = null
+                    }
+                ) {
+                    Text("Cerrar")
+                }
+            }
+        )
+    }
+
+    tareaCompartir?.let { tarea ->
+        AlertDialog(
+            onDismissRequest = {
+                tareaCompartir = null
+            },
+            title = {
+                Text("Compartir tarea")
+            },
+            text = {
+                Text("Elige el formato para compartir esta tarea.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        compartirTareaPdf(context, tarea)
+                        tareaCompartir = null
+                    }
+                ) {
+                    Text("PDF")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        compartirTareaTxt(context, tarea)
+                        tareaCompartir = null
+                    }
+                ) {
+                    Text("TXT")
+                }
+            }
+        )
+    }
+
+    tareaEditando?.let { tarea ->
+        var tituloEditado by remember(tarea.id) {
+            mutableStateOf(tarea.titulo)
+        }
+
+        var descripcionEditada by remember(tarea.id) {
+            mutableStateOf(tarea.descripcion)
+        }
+
+        var fechaEditada by remember(tarea.id) {
+            mutableStateOf(tarea.fecha)
+        }
+
+        var archivoNombreEditado by remember(tarea.id) {
+            mutableStateOf(tarea.archivoNombre ?: "")
+        }
+
+        var mostrarCalendarioEditar by remember {
+            mutableStateOf(false)
+        }
+
+        val datePickerEditarState = rememberDatePickerState()
+
+        if (mostrarCalendarioEditar) {
+            DatePickerDialog(
+                onDismissRequest = {
+                    mostrarCalendarioEditar = false
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val millis = datePickerEditarState.selectedDateMillis
+                            if (millis != null) {
+                                fechaEditada = formatearFecha(millis)
+                            }
+                            mostrarCalendarioEditar = false
+                        }
+                    ) {
+                        Text("Aceptar")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            mostrarCalendarioEditar = false
+                        }
+                    ) {
+                        Text("Cancelar")
+                    }
+                }
+            ) {
+                DatePicker(state = datePickerEditarState)
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = {
+                tareaEditando = null
+            },
+            title = {
+                Text("Editar tarea")
+            },
+            text = {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item {
+                        OutlinedTextField(
+                            value = tituloEditado,
+                            onValueChange = { tituloEditado = it },
+                            label = { Text("Título") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                    }
+
+                    item {
+                        OutlinedTextField(
+                            value = descripcionEditada,
+                            onValueChange = { descripcionEditada = it },
+                            label = { Text("Descripción") },
+                            placeholder = { Text("Edita los detalles de la tarea...") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(150.dp),
+                            minLines = 5,
+                            maxLines = 8,
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                    }
+
+                    item {
+                        Box(
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(
+                                value = fechaEditada,
+                                onValueChange = {},
+                                label = { Text("Fecha") },
+                                readOnly = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(14.dp)
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clickable {
+                                        mostrarCalendarioEditar = true
+                                    }
+                            )
+                        }
+                    }
+
+                    if (!tarea.archivoRuta.isNullOrBlank()) {
+                        item {
+                            OutlinedTextField(
+                                value = archivoNombreEditado,
+                                onValueChange = { archivoNombreEditado = it },
+                                label = { Text("Nombre del archivo") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val tareaActualizada = tarea.copy(
+                            titulo = tituloEditado,
+                            descripcion = descripcionEditada,
+                            fecha = fechaEditada,
+                            archivoNombre = archivoNombreEditado.ifBlank {
+                                tarea.archivoNombre
+                            }
+                        )
+
+                        viewModel.editarTarea(tareaActualizada)
+                        tareaEditando = null
+                    }
+                ) {
+                    Text("Guardar")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        tareaEditando = null
+                    }
+                ) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            Encabezado(
+                temaOscuro = temaOscuro,
+                onTemaOscuroChange = onTemaOscuroChange,
+                notificaciones = notificaciones,
+                onNotificacionesChange = onNotificacionesChange
+            )
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                TarjetaResumen(
+                    titulo = "Total",
+                    cantidad = totalTareas,
+                    colorFondo = Color(0xFFECEFFF),
+                    colorTexto = Color(0xFF5B5FF0),
+                    modifier = Modifier.weight(1f)
+                )
+
+                TarjetaResumen(
+                    titulo = "Pendientes",
+                    cantidad = tareasPendientes,
+                    colorFondo = Color(0xFFFFF3C7),
+                    colorTexto = Color(0xFFF0A500),
+                    modifier = Modifier.weight(1f)
+                )
+
+                TarjetaResumen(
+                    titulo = "Listas",
+                    cantidad = tareasCompletadas,
+                    colorFondo = Color(0xFFD7F8E8),
+                    colorTexto = Color(0xFF13B67A),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        if (mostrarArchivoRecibido && archivoNombre != null) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFEAF2FF)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Text(
+                            text = "📎 Archivo recibido",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF2457C5)
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = archivoNombre ?: "Archivo",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF333333)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            FilledTonalButton(
+                                onClick = {
+                                    titulo = archivoNombre ?: titulo
+                                    descripcion = "Archivo adjunto: ${archivoNombre ?: ""}"
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Usar")
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    archivoNombre = null
+                                    archivoRuta = null
+                                    archivoMime = null
+                                    mostrarArchivoRecibido = false
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Quitar")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Card(
+                            shape = RoundedCornerShape(50),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFF5B5FF0)
+                            )
+                        ) {
+                            Text(
+                                text = "+",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(
+                                    horizontal = 15.dp,
+                                    vertical = 8.dp
+                                )
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Column {
+                            Text(
+                                text = "Nueva tarea",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Text(
+                                text = "Completa los datos de tu pendiente",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    OutlinedTextField(
+                        value = titulo,
+                        onValueChange = { titulo = it },
+                        label = { Text("Título de la tarea") },
+                        placeholder = { Text("Ej: Revisar documentación") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedTextField(
+                        value = descripcion,
+                        onValueChange = { descripcion = it },
+                        label = { Text("Descripción") },
+                        placeholder = { Text("Escribe los detalles de la tarea...") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(150.dp),
+                        minLines = 5,
+                        maxLines = 8,
+                        shape = RoundedCornerShape(16.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Box(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OutlinedTextField(
+                            value = fecha,
+                            onValueChange = {},
+                            label = { Text("Fecha") },
+                            placeholder = { Text("Seleccionar fecha") },
+                            readOnly = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp)
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable {
+                                    mostrarCalendario = true
+                                }
+                        )
+                    }
+
+                    if (!archivoNombre.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "📎 Adjunto: $archivoNombre",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF2457C5),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Button(
+                        onClick = {
+                            if (titulo.isNotBlank()) {
+                                viewModel.agregarTarea(
+                                    titulo = titulo,
+                                    descripcion = descripcion,
+                                    fecha = fecha,
+                                    archivoNombre = archivoNombre,
+                                    archivoRuta = archivoRuta,
+                                    archivoMime = archivoMime
+                                )
+
+                                if (notificaciones) {
+                                    mostrarNotificacionTarea(
+                                        context = context,
+                                        titulo = "Tarea agregada",
+                                        mensaje = "Se agregó: $titulo"
+                                    )
+                                }
+
+                                titulo = ""
+                                descripcion = ""
+                                fecha = ""
+                                archivoNombre = null
+                                archivoRuta = null
+                                archivoMime = null
+                                mostrarArchivoRecibido = false
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF5B5FF0)
+                        )
+                    ) {
+                        Text(
+                            text = "+ Agregar tarea",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            OutlinedTextField(
+                value = busqueda,
+                onValueChange = { busqueda = it },
+                label = { Text("Buscar tarea") },
+                placeholder = { Text("Buscar por id, título, descripción, fecha o archivo") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp)
+            )
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        compartirTareasTxt(context, tareas)
+                    },
+                    modifier = Modifier.weight(1f),
+                    enabled = tareas.isNotEmpty(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Compartir TXT")
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        compartirTareasPdf(context, tareas)
+                    },
+                    modifier = Modifier.weight(1f),
+                    enabled = tareas.isNotEmpty(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Compartir PDF")
+                }
+            }
+        }
+
+        item {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Mis tareas",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Card(
+                    shape = RoundedCornerShape(50),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFECEFFF)
+                    )
+                ) {
+                    Text(
+                        text = tareasFiltradas.size.toString(),
+                        color = Color(0xFF5B5FF0),
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+
+        if (tareasFiltradas.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Sin resultados",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = "No hay tareas que coincidan con la búsqueda.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+        } else {
+            items(
+                items = tareasFiltradas,
+                key = { it.id }
+            ) { tarea ->
+                ItemTarea(
+                    tarea = tarea,
+                    onClick = {
+                        tareaSeleccionada = tarea
+                    },
+                    onCompartir = {
+                        tareaCompartir = tarea
+                    },
+                    onEditar = {
+                        tareaEditando = tarea
+                    },
+                    onAbrirArchivo = {
+                        abrirArchivo(context, tarea)
+                    },
+                    onCambiarEstado = {
+                        viewModel.cambiarEstadoTarea(tarea)
+                    },
+                    onEliminar = {
+                        viewModel.eliminarTarea(tarea)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun Encabezado(
+    temaOscuro: Boolean,
+    onTemaOscuroChange: (Boolean) -> Unit,
+    notificaciones: Boolean,
+    onNotificacionesChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
+    ) {
+        Column {
+            Text(
+                text = "Mis Tareas",
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                text = "Organiza tu día con claridad",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+            )
+        }
+
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (temaOscuro) "Oscuro" else "Claro",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color(0xFF5B5FF0),
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                Switch(
+                    checked = temaOscuro,
+                    onCheckedChange = onTemaOscuroChange
+                )
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (notificaciones) "Activas" else "Inactivas",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color(0xFF13B67A),
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                Switch(
+                    checked = notificaciones,
+                    onCheckedChange = onNotificacionesChange
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun TarjetaResumen(
+    titulo: String,
+    cantidad: Int,
+    colorFondo: Color,
+    colorTexto: Color,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.height(86.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = colorFondo
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = cantidad.toString(),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = colorTexto
+            )
+
+            Text(
+                text = titulo,
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFF333333)
+            )
+        }
+    }
+}
+
+@Composable
+fun ItemTarea(
+    tarea: Tarea,
+    onClick: () -> Unit,
+    onCompartir: () -> Unit,
+    onEditar: () -> Unit,
+    onAbrirArchivo: () -> Unit,
+    onCambiarEstado: () -> Unit,
+    onEliminar: () -> Unit
+) {
+    val colorEstado = if (tarea.estaCompletada) {
+        Color(0xFF13B67A)
+    } else {
+        Color(0xFF5B5FF0)
+    }
+
+    val fondoEstado = if (tarea.estaCompletada) {
+        Color(0xFFD7F8E8)
+    } else {
+        Color(0xFFECEFFF)
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(18.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = tarea.titulo,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        textDecoration = if (tarea.estaCompletada) {
+                            TextDecoration.LineThrough
+                        } else {
+                            TextDecoration.None
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = tarea.descripcion.ifBlank { "Sin descripción" },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                    )
+
+                    if (!tarea.archivoNombre.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = "📎 ${tarea.archivoNombre}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF2457C5),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Column(
+                    horizontalAlignment = Alignment.End
+                ) {
+                    Row {
+                        IconButton(onClick = onCompartir) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Compartir",
+                                tint = Color(0xFF5B5FF0)
+                            )
+                        }
+
+                        IconButton(onClick = onEditar) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Editar",
+                                tint = Color(0xFF13B67A)
+                            )
+                        }
+
+                        IconButton(onClick = onEliminar) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Eliminar",
+                                tint = Color(0xFFE74C3C)
+                            )
+                        }
+                    }
+
+                    if (!tarea.archivoRuta.isNullOrBlank()) {
+                        IconButton(onClick = onAbrirArchivo) {
+                            Icon(
+                                imageVector = Icons.Default.OpenInNew,
+                                contentDescription = "Abrir archivo",
+                                tint = Color(0xFF2457C5)
+                            )
+                        }
+                    }
+
+                    Card(
+                        shape = RoundedCornerShape(50),
+                        colors = CardDefaults.cardColors(
+                            containerColor = fondoEstado
+                        )
+                    ) {
+                        Text(
+                            text = if (tarea.estaCompletada) "✓ Lista" else "Pendiente",
+                            color = colorEstado,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "📅 ${tarea.fecha.ifBlank { "Sin fecha" }}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            FilledTonalButton(
+                onClick = onCambiarEstado,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    if (tarea.estaCompletada) {
+                        "Reabrir tarea"
+                    } else {
+                        "Completar tarea"
+                    }
+                )
+            }
+        }
+    }
+}
+
+fun formatearFecha(millis: Long): String {
+    val formato = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+    return formato.format(Date(millis))
+}
+
+fun crearCanalNotificaciones(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val canal = NotificationChannel(
+            CANAL_TAREAS_ID,
+            "Notificaciones de tareas",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "Canal para avisos de tareas"
+        }
+
+        val notificationManager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        notificationManager.createNotificationChannel(canal)
+    }
+}
+
+fun mostrarNotificacionTarea(
+    context: Context,
+    titulo: String,
+    mensaje: String
+) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+    }
+
+    val notificacion = NotificationCompat.Builder(context, CANAL_TAREAS_ID)
+        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setContentTitle(titulo)
+        .setContentText(mensaje)
+        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        .setAutoCancel(true)
+        .build()
+
+    NotificationManagerCompat.from(context).notify(
+        System.currentTimeMillis().toInt(),
+        notificacion
+    )
+}
+
+fun copiarArchivoRecibido(
+    context: Context,
+    intent: Intent?
+): ArchivoRecibido? {
+    if (intent == null) return null
+    if (intent.action != Intent.ACTION_SEND) return null
+
+    val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    } else {
+        @Suppress("DEPRECATION")
+        intent.getParcelableExtra(Intent.EXTRA_STREAM)
+    } ?: return null
+
+    val nombreOriginal = obtenerNombreArchivo(context, uri)
+    val mime = intent.type ?: context.contentResolver.getType(uri) ?: "application/octet-stream"
+
+    val carpeta = File(context.filesDir, "archivos_tareas")
+    if (!carpeta.exists()) carpeta.mkdirs()
+
+    val archivoDestino = File(
+        carpeta,
+        "${System.currentTimeMillis()}_$nombreOriginal"
+    )
+
+    context.contentResolver.openInputStream(uri)?.use { input ->
+        FileOutputStream(archivoDestino).use { output ->
+            input.copyTo(output)
+        }
+    }
+
+    return ArchivoRecibido(
+        nombre = nombreOriginal,
+        ruta = archivoDestino.absolutePath,
+        mime = mime
+    )
+}
+
+fun obtenerNombreArchivo(context: Context, uri: Uri): String {
+    var nombre = "archivo_recibido"
+
+    val cursor = context.contentResolver.query(
+        uri,
+        null,
+        null,
+        null,
+        null
+    )
+
+    cursor?.use {
+        val indiceNombre = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+
+        if (indiceNombre >= 0 && it.moveToFirst()) {
+            nombre = it.getString(indiceNombre)
+        }
+    }
+
+    return nombre
+}
+
+fun abrirArchivo(context: Context, tarea: Tarea) {
+    val ruta = tarea.archivoRuta ?: return
+    val archivo = File(ruta)
+
+    if (!archivo.exists()) return
+
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        archivo
+    )
+
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, tarea.archivoMime ?: "*/*")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+
+    context.startActivity(
+        Intent.createChooser(intent, "Abrir archivo")
+    )
+}
+
+fun compartirTareasTxt(context: Context, tareas: List<Tarea>) {
+    val contenido = buildString {
+        appendLine("LISTA DE TAREAS")
+        appendLine("================")
+        appendLine()
+
+        if (tareas.isEmpty()) {
+            appendLine("No hay tareas registradas.")
+        } else {
+            tareas.forEachIndexed { index, tarea ->
+                appendLine("${index + 1}. ${tarea.titulo}")
+                appendLine("Descripción: ${tarea.descripcion.ifBlank { "Sin descripción" }}")
+                appendLine("Fecha: ${tarea.fecha.ifBlank { "Sin fecha" }}")
+                appendLine("Estado: ${if (tarea.estaCompletada) "Completada" else "Pendiente"}")
+                appendLine("Archivo: ${tarea.archivoNombre ?: "Sin archivo"}")
+                appendLine("----------------")
+            }
+        }
+    }
+
+    val archivo = File(context.cacheDir, "tareas.txt")
+    archivo.writeText(contenido)
+
+    compartirArchivo(
+        context = context,
+        archivo = archivo,
+        tipoMime = "text/plain"
+    )
+}
+
+fun compartirTareasPdf(context: Context, tareas: List<Tarea>) {
+    val pdfDocument = PdfDocument()
+
+    val textoNormal = Paint().apply {
+        textSize = 14f
+    }
+
+    val textoTitulo = Paint().apply {
+        textSize = 22f
+        isFakeBoldText = true
+    }
+
+    val textoSubtitulo = Paint().apply {
+        textSize = 16f
+        isFakeBoldText = true
+    }
+
+    var numeroPagina = 1
+    var pageInfo = PdfDocument.PageInfo.Builder(595, 842, numeroPagina).create()
+    var page = pdfDocument.startPage(pageInfo)
+    var canvas = page.canvas
+
+    var y = 50
+
+    canvas.drawText("Lista de Tareas", 40f, y.toFloat(), textoTitulo)
+    y += 40
+
+    if (tareas.isEmpty()) {
+        canvas.drawText("No hay tareas registradas.", 40f, y.toFloat(), textoNormal)
+    } else {
+        tareas.forEachIndexed { index, tarea ->
+            if (y > 760) {
+                pdfDocument.finishPage(page)
+
+                numeroPagina++
+                pageInfo = PdfDocument.PageInfo.Builder(595, 842, numeroPagina).create()
+                page = pdfDocument.startPage(pageInfo)
+                canvas = page.canvas
+                y = 50
+            }
+
+            canvas.drawText("${index + 1}. ${tarea.titulo}", 40f, y.toFloat(), textoSubtitulo)
+            y += 24
+
+            canvas.drawText(
+                "Descripción: ${tarea.descripcion.ifBlank { "Sin descripción" }}",
+                40f,
+                y.toFloat(),
+                textoNormal
+            )
+            y += 22
+
+            canvas.drawText(
+                "Fecha: ${tarea.fecha.ifBlank { "Sin fecha" }}",
+                40f,
+                y.toFloat(),
+                textoNormal
+            )
+            y += 22
+
+            canvas.drawText(
+                "Estado: ${if (tarea.estaCompletada) "Completada" else "Pendiente"}",
+                40f,
+                y.toFloat(),
+                textoNormal
+            )
+            y += 22
+
+            canvas.drawText(
+                "Archivo: ${tarea.archivoNombre ?: "Sin archivo"}",
+                40f,
+                y.toFloat(),
+                textoNormal
+            )
+            y += 36
+        }
+    }
+
+    pdfDocument.finishPage(page)
+
+    val archivo = File(context.cacheDir, "tareas.pdf")
+    val outputStream = FileOutputStream(archivo)
+
+    pdfDocument.writeTo(outputStream)
+    pdfDocument.close()
+    outputStream.close()
+
+    compartirArchivo(
+        context = context,
+        archivo = archivo,
+        tipoMime = "application/pdf"
+    )
+}
+
+fun compartirTareaTxt(context: Context, tarea: Tarea) {
+    val contenido = buildString {
+        appendLine("TAREA")
+        appendLine("=====")
+        appendLine()
+        appendLine("Título: ${tarea.titulo}")
+        appendLine("Descripción: ${tarea.descripcion.ifBlank { "Sin descripción" }}")
+        appendLine("Fecha: ${tarea.fecha.ifBlank { "Sin fecha" }}")
+        appendLine("Estado: ${if (tarea.estaCompletada) "Completada" else "Pendiente"}")
+        appendLine("Archivo: ${tarea.archivoNombre ?: "Sin archivo"}")
+    }
+
+    val archivo = File(context.cacheDir, "tarea_${tarea.id}.txt")
+    archivo.writeText(contenido)
+
+    compartirArchivo(
+        context = context,
+        archivo = archivo,
+        tipoMime = "text/plain"
+    )
+}
+
+fun compartirTareaPdf(context: Context, tarea: Tarea) {
+    val pdfDocument = PdfDocument()
+
+    val textoNormal = Paint().apply {
+        textSize = 14f
+    }
+
+    val textoTitulo = Paint().apply {
+        textSize = 22f
+        isFakeBoldText = true
+    }
+
+    val textoSubtitulo = Paint().apply {
+        textSize = 16f
+        isFakeBoldText = true
+    }
+
+    val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
+    val page = pdfDocument.startPage(pageInfo)
+    val canvas = page.canvas
+
+    var y = 50
+
+    canvas.drawText("Detalle de Tarea", 40f, y.toFloat(), textoTitulo)
+    y += 45
+
+    canvas.drawText("Título:", 40f, y.toFloat(), textoSubtitulo)
+    y += 24
+    canvas.drawText(tarea.titulo, 40f, y.toFloat(), textoNormal)
+    y += 35
+
+    canvas.drawText("Descripción:", 40f, y.toFloat(), textoSubtitulo)
+    y += 24
+    canvas.drawText(
+        tarea.descripcion.ifBlank { "Sin descripción" },
+        40f,
+        y.toFloat(),
+        textoNormal
+    )
+    y += 35
+
+    canvas.drawText("Fecha:", 40f, y.toFloat(), textoSubtitulo)
+    y += 24
+    canvas.drawText(
+        tarea.fecha.ifBlank { "Sin fecha" },
+        40f,
+        y.toFloat(),
+        textoNormal
+    )
+    y += 35
+
+    canvas.drawText("Estado:", 40f, y.toFloat(), textoSubtitulo)
+    y += 24
+    canvas.drawText(
+        if (tarea.estaCompletada) "Completada" else "Pendiente",
+        40f,
+        y.toFloat(),
+        textoNormal
+    )
+    y += 35
+
+    canvas.drawText("Archivo:", 40f, y.toFloat(), textoSubtitulo)
+    y += 24
+    canvas.drawText(
+        tarea.archivoNombre ?: "Sin archivo",
+        40f,
+        y.toFloat(),
+        textoNormal
+    )
+
+    pdfDocument.finishPage(page)
+
+    val archivo = File(context.cacheDir, "tarea_${tarea.id}.pdf")
+    val outputStream = FileOutputStream(archivo)
+
+    pdfDocument.writeTo(outputStream)
+    pdfDocument.close()
+    outputStream.close()
+
+    compartirArchivo(
+        context = context,
+        archivo = archivo,
+        tipoMime = "application/pdf"
+    )
+}
+
+fun compartirArchivo(
+    context: Context,
+    archivo: File,
+    tipoMime: String
+) {
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        archivo
+    )
+
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = tipoMime
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+
+    context.startActivity(
+        Intent.createChooser(intent, "Compartir archivo")
+    )
+}

@@ -1,0 +1,41 @@
+package com.example.apptareas.data
+
+import android.content.Context
+
+class ConfigPreferences(context: Context) {
+
+    private val preferencias = context.getSharedPreferences(
+        "config",
+        Context.MODE_PRIVATE
+    )
+
+    fun obtenerTemaOscuro(): Boolean {
+        return preferencias.getBoolean("tema_oscuro", false)
+    }
+
+    fun obtenerNotificaciones(): Boolean {
+        return preferencias.getBoolean("notificaciones", true)
+    }
+
+    fun guardarTemaOscuro(valor: Boolean) {
+        preferencias.edit()
+            .putBoolean("tema_oscuro", valor)
+            .apply()
+    }
+
+    fun guardarNotificaciones(valor: Boolean) {
+        preferencias.edit()
+            .putBoolean("notificaciones", valor)
+            .apply()
+    }
+
+    fun guardarConfiguracion(
+        temaOscuro: Boolean,
+        notificaciones: Boolean
+    ) {
+        preferencias.edit()
+            .putBoolean("tema_oscuro", temaOscuro)
+            .putBoolean("notificaciones", notificaciones)
+            .apply()
+    }
+}

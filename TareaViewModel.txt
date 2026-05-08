@@ -1,0 +1,85 @@
+package com.example.apptareas
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.apptareas.data.ConfigPreferences
+import com.example.apptareas.data.Tarea
+import com.example.apptareas.data.TareaDatabase
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+class TareaViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val database = TareaDatabase.getDatabase(application)
+    private val tareaDao = database.tareaDao()
+    private val configPreferences = ConfigPreferences(application)
+
+    val tareas = tareaDao.obtenerTodasLasTareas()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val temaOscuroInicial = configPreferences.obtenerTemaOscuro()
+    val notificacionesInicial = configPreferences.obtenerNotificaciones()
+
+    fun agregarTarea(
+        titulo: String,
+        descripcion: String,
+        fecha: String,
+        archivoNombre: String? = null,
+        archivoRuta: String? = null,
+        archivoMime: String? = null
+    ) {
+        if (titulo.isBlank()) return
+
+        viewModelScope.launch {
+            val nuevaTarea = Tarea(
+                titulo = titulo,
+                descripcion = descripcion,
+                fecha = fecha,
+                estaCompletada = false,
+                archivoNombre = archivoNombre,
+                archivoRuta = archivoRuta,
+                archivoMime = archivoMime
+            )
+
+            tareaDao.insertarTarea(nuevaTarea)
+        }
+    }
+
+    fun cambiarEstadoTarea(tarea: Tarea) {
+        viewModelScope.launch {
+            tareaDao.actualizarTarea(
+                tarea.copy(
+                    estaCompletada = !tarea.estaCompletada
+                )
+            )
+        }
+    }
+
+    fun editarTarea(tarea: Tarea) {
+        viewModelScope.launch {
+            tareaDao.actualizarTarea(tarea)
+        }
+    }
+
+    fun eliminarTarea(tarea: Tarea) {
+        viewModelScope.launch {
+            tareaDao.eliminarTarea(tarea)
+        }
+    }
+
+    fun guardarPreferencias(
+        temaOscuro: Boolean,
+        notificaciones: Boolean
+    ) {
+        configPreferences.guardarConfiguracion(
+            temaOscuro = temaOscuro,
+            notificaciones = notificaciones
+        )
+    }
+}
